@@ -19,24 +19,27 @@ const PALETTE = [4]c.Color{
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{ .verbose_log = true }).init;
     defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     // Parse command line args
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
-
     if (args.len < 2) {
-        std.debug.print("Usage: zgb <rom.gb>\n", .{});
-        std.debug.print("\nControls:\n", .{});
-        std.debug.print("  Arrow keys - D-pad\n", .{});
-        std.debug.print("  Z - A button\n", .{});
-        std.debug.print("  X - B button\n", .{});
-        std.debug.print("  Enter - Start\n", .{});
-        std.debug.print("  Backspace - Select\n", .{});
-        std.debug.print("  R - Reset\n", .{});
-        std.debug.print("  Escape - Quit\n", .{});
+        std.debug.print(
+            \\Usage: zgb <rom.gb>
+            \\Controls:
+            \\  Arrow keys - D-pad
+            \\  Z - A button
+            \\  X - B button
+            \\  Enter - Start
+            \\  Backspace - Select
+            \\  R - Reset
+            \\  Escape - Quit
+        , .{});
         return;
     }
 
@@ -44,20 +47,15 @@ pub fn main() !void {
 
     // Initialize emulator
     // Two-phase init: create struct first, then setup pointers after it's in final location
-    var gb = zgb.GameBoy.create(allocator);
+    var gb = zgb.GameBoy.create();
     gb.setup(); // Now pointers point to correct locations
-    defer gb.deinit();
+    defer gb.deinit(allocator);
 
     // Load ROM
-    gb.loadRom(rom_path) catch |err| {
+    gb.loadRom(allocator, rom_path) catch |err| {
         std.debug.print("Failed to load ROM: {}\n", .{err});
         return;
     };
-
-    // Debug: trace first 20 instructions
-    std.log.info("=== Initial CPU trace ===", .{});
-    gb.debugTrace(20);
-    std.log.info("=== End trace ===", .{});
 
     // Initialize raylib window
     c.initWindow(SCREEN_WIDTH * SCALE, SCREEN_HEIGHT * SCALE, "zgb - GameBoy Emulator");
@@ -67,9 +65,7 @@ pub fn main() !void {
 
     // Create pixel buffer
     var pixels: [SCREEN_WIDTH * SCREEN_HEIGHT]c.Color = undefined;
-    for (&pixels) |*p| {
-        p.* = PALETTE[0];
-    }
+    @memset(&pixels, PALETTE[0]);
 
     // Create image with correct format
     const image = c.raylib.Image{

@@ -247,10 +247,11 @@ pub const Cpu = struct {
             // NOP
             0x00 => 4,
 
-            // LD BC,nn
-            0x01 => {
-                const value = self.readPc16();
-                self.bc = value;
+            // LD r16,nn (BC, DE, HL, SP)
+            // Pattern: 00_pp_0001
+            0x01, 0x11, 0x21, 0x31 => {
+                const rp: u2 = @truncate((opcode >> 4) & 0x03);
+                self.r16(@enumFromInt(rp)).* = self.readPc16();
                 return 12;
             },
 
@@ -260,9 +261,11 @@ pub const Cpu = struct {
                 return 8;
             },
 
-            // INC BC
-            0x03 => {
-                self.bc = self.bc +% 1;
+            // INC r16 (BC, DE, HL, SP)
+            // Pattern: 00_pp_0011
+            0x03, 0x13, 0x23, 0x33 => {
+                const rp: u2 = @truncate((opcode >> 4) & 0x03);
+                self.r16(@enumFromInt(rp)).* +%= 1;
                 return 8;
             },
 
@@ -304,22 +307,25 @@ pub const Cpu = struct {
                 return 20;
             },
 
-            // ADD HL,BC
-            0x09 => {
-                self.addHl(self.bc);
+            // ADD HL,r16 (BC, DE, HL, SP)
+            // Pattern: 00_pp_1001
+            0x09, 0x19, 0x29, 0x39 => {
+                const rp: u2 = @truncate((opcode >> 4) & 0x03);
+                self.addHl(self.r16(@enumFromInt(rp)).*);
                 return 8;
             },
 
             // LD A,(BC)
             0x0A => {
-                const a = self.r8(.a);
-                a.* = self.read(self.bc);
+                self.r8(.a).* = self.read(self.bc);
                 return 8;
             },
 
-            // DEC BC
-            0x0B => {
-                self.bc = self.bc -% 1;
+            // DEC r16 (BC, DE, HL, SP)
+            // Pattern: 00_pp_1011
+            0x0B, 0x1B, 0x2B, 0x3B => {
+                const rp: u2 = @truncate((opcode >> 4) & 0x03);
+                self.r16(@enumFromInt(rp)).* -%= 1;
                 return 8;
             },
 
@@ -360,22 +366,9 @@ pub const Cpu = struct {
                 return 4;
             },
 
-            // LD DE,nn
-            0x11 => {
-                const value = self.readPc16();
-                self.de = value;
-                return 12;
-            },
-
             // LD (DE),A
             0x12 => {
                 self.write(self.de, self.r8(.a).*);
-                return 8;
-            },
-
-            // INC DE
-            0x13 => {
-                self.de = self.de +% 1;
                 return 8;
             },
 
@@ -419,22 +412,9 @@ pub const Cpu = struct {
                 return 12;
             },
 
-            // ADD HL,DE
-            0x19 => {
-                self.addHl(self.de);
-                return 8;
-            },
-
             // LD A,(DE)
             0x1A => {
-                const a = self.r8(.a);
-                a.* = self.read(self.de);
-                return 8;
-            },
-
-            // DEC DE
-            0x1B => {
-                self.de = self.de -% 1;
+                self.r8(.a).* = self.read(self.de);
                 return 8;
             },
 
@@ -472,22 +452,9 @@ pub const Cpu = struct {
             // JR NZ,n
             0x20 => self.jr(!self.getFlag(FLAG_Z)),
 
-            // LD HL,nn
-            0x21 => {
-                const value = self.readPc16();
-                self.hl = value;
-                return 12;
-            },
-
             // LD (HL+),A
             0x22 => {
                 self.write(self.hl, self.r8(.a).*);
-                self.hl = self.hl +% 1;
-                return 8;
-            },
-
-            // INC HL
-            0x23 => {
                 self.hl = self.hl +% 1;
                 return 8;
             },
@@ -522,23 +489,10 @@ pub const Cpu = struct {
             // JR Z,n
             0x28 => self.jr(self.getFlag(FLAG_Z)),
 
-            // ADD HL,HL
-            0x29 => {
-                self.addHl(self.hl);
-                return 8;
-            },
-
             // LD A,(HL+)
             0x2A => {
-                const a = self.r8(.a);
-                a.* = self.read(self.hl);
-                self.hl = self.hl +% 1;
-                return 8;
-            },
-
-            // DEC HL
-            0x2B => {
-                self.hl = self.hl -% 1;
+                self.r8(.a).* = self.read(self.hl);
+                self.hl +%= 1;
                 return 8;
             },
 
@@ -572,22 +526,10 @@ pub const Cpu = struct {
             // JR NC,n
             0x30 => self.jr(!self.getFlag(FLAG_C)),
 
-            // LD SP,nn
-            0x31 => {
-                self.sp = self.readPc16();
-                return 12;
-            },
-
             // LD (HL-),A
             0x32 => {
                 self.write(self.hl, self.r8(.a).*);
                 self.hl = self.hl -% 1;
-                return 8;
-            },
-
-            // INC SP
-            0x33 => {
-                self.sp +%= 1;
                 return 8;
             },
 
@@ -620,22 +562,10 @@ pub const Cpu = struct {
             // JR C,n
             0x38 => self.jr(self.getFlag(FLAG_C)),
 
-            // ADD HL,SP
-            0x39 => {
-                self.addHl(self.sp);
-                return 8;
-            },
-
             // LD A,(HL-)
             0x3A => {
                 self.r8(.a).* = self.read(self.hl);
-                self.hl = self.hl -% 1;
-                return 8;
-            },
-
-            // DEC SP
-            0x3B => {
-                self.sp -%= 1;
+                self.hl -%= 1;
                 return 8;
             },
 

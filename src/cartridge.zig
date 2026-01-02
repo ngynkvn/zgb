@@ -9,7 +9,6 @@ const Mbc5 = @import("mbc/mbc5.zig").Mbc5;
 pub const Cartridge = struct {
     rom: []const u8,
     mbc: Mbc,
-    allocator: std.mem.Allocator,
 
     // Header info
     title: [16]u8 = undefined,
@@ -57,7 +56,6 @@ pub const Cartridge = struct {
         var cart = Self{
             .rom = rom,
             .mbc = undefined,
-            .allocator = allocator,
         };
 
         // Parse header
@@ -82,9 +80,9 @@ pub const Cartridge = struct {
         return cart;
     }
 
-    pub fn deinit(self: *Self) void {
-        self.mbc.deinit();
-        self.allocator.free(self.rom);
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        self.mbc.deinit(allocator);
+        allocator.free(self.rom);
     }
 
     fn createMbc(allocator: std.mem.Allocator, cart_type: u8, rom: []const u8, ram_banks: u8) !Mbc {

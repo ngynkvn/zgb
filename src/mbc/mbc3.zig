@@ -5,7 +5,6 @@ const std = @import("std");
 pub const Mbc3 = struct {
     rom: []const u8,
     ram: ?[]u8,
-    allocator: std.mem.Allocator,
 
     // Registers
     ram_rtc_enabled: bool = false,
@@ -48,16 +47,15 @@ pub const Mbc3 = struct {
         return Self{
             .rom = rom,
             .ram = ram,
-            .allocator = allocator,
             .has_rtc = has_rtc,
             .rom_banks = @intCast(rom.len / 0x4000),
             .ram_banks = ram_banks,
         };
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         if (self.ram) |r| {
-            self.allocator.free(r);
+            allocator.free(r);
         }
     }
 

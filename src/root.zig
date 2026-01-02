@@ -19,8 +19,6 @@ pub const GameBoy = struct {
     joypad: Joypad,
     cartridge: ?Cartridge = null,
 
-    allocator: std.mem.Allocator,
-
     // Timing
     cycles_per_frame: u32 = 70224, // ~59.7 fps
     cycles_this_frame: u32 = 0,
@@ -29,14 +27,13 @@ pub const GameBoy = struct {
 
     /// Create an uninitialized GameBoy struct.
     /// IMPORTANT: You MUST call setup() after the struct is in its final memory location!
-    pub fn create(allocator: std.mem.Allocator) Self {
+    pub fn create() Self {
         return Self{
             .bus = Bus.init(),
             .cpu = undefined,
             .ppu = undefined,
             .timer = undefined,
             .joypad = undefined,
-            .allocator = allocator,
         };
     }
 
@@ -55,18 +52,18 @@ pub const GameBoy = struct {
         self.bus.joypad = &self.joypad;
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         if (self.cartridge) |*cart| {
-            cart.deinit();
+            cart.deinit(allocator);
         }
     }
 
-    pub fn loadRom(self: *Self, path: []const u8) !void {
+    pub fn loadRom(self: *Self, allocator: std.mem.Allocator, path: []const u8) !void {
         if (self.cartridge) |*cart| {
-            cart.deinit();
+            cart.deinit(allocator);
         }
 
-        self.cartridge = try Cartridge.load(self.allocator, path);
+        self.cartridge = try Cartridge.load(allocator, path);
         self.bus.cartridge = &self.cartridge.?;
 
         std.log.info("Loaded: {s}", .{self.cartridge.?.getTitle()});

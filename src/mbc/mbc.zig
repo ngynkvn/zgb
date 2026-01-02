@@ -31,12 +31,12 @@ pub const Mbc = union(enum) {
         }
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .none => {},
-            .mbc1 => |*m| m.deinit(),
-            .mbc3 => |*m| m.deinit(),
-            .mbc5 => |*m| m.deinit(),
+            .mbc1 => |*m| m.deinit(allocator),
+            .mbc3 => |*m| m.deinit(allocator),
+            .mbc5 => |*m| m.deinit(allocator),
         }
     }
 };
