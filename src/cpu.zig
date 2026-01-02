@@ -52,7 +52,8 @@ pub const Cpu = struct {
     // Register enums
     // Standard 8-bit register encoding in opcodes (3 bits)
     pub const Register8 = enum { b, c, d, e, h, l, hl_ind, a };
-    pub const Register16 = enum { bc, de, hl, sp };
+    pub const Register16 = enum(u2) { bc, de, hl, sp };
+    pub const Register16Stack = enum(u2) { bc, de, hl, af }; // For PUSH/POP
 
     // Extended register enum that includes F (for internal use)
     pub const Reg8 = enum { a, f, b, c, d, e, h, l };
@@ -78,6 +79,16 @@ pub const Cpu = struct {
             .de => &self.de,
             .hl => &self.hl,
             .sp => &self.sp,
+        };
+    }
+
+    /// Get pointer to 16-bit register pair (stack variant: AF instead of SP)
+    pub inline fn r16stk(self: *Self, reg: Register16Stack) *u16 {
+        return switch (reg) {
+            .bc => &self.bc,
+            .de => &self.de,
+            .hl => &self.hl,
+            .af => &self.af,
         };
     }
 
@@ -681,9 +692,14 @@ pub const Cpu = struct {
             // RET NZ
             0xC0 => self.ret(!self.getFlag(FLAG_Z)),
 
-            // POP BC
-            0xC1 => {
-                self.bc = self.pop();
+            // POP r16 (BC, DE, HL, AF)
+            // Pattern: 11_pp_0001
+            0xC1, 0xD1, 0xE1, 0xF1 => {
+                const rp: u2 = @truncate((opcode >> 4) & 0x03);
+                const reg = self.r16stk(@enumFromInt(rp));
+                reg.* = self.pop();
+                // Special case: AF lower nibble is always 0
+                if (rp == 3) self.af &= 0xFFF0;
                 return 12;
             },
 
@@ -699,21 +715,26 @@ pub const Cpu = struct {
             // CALL NZ,nn
             0xC4 => self.call(!self.getFlag(FLAG_Z)),
 
-            // PUSH BC
-            0xC5 => {
-                self.push(self.bc);
+            // PUSH r16 (BC, DE, HL, AF)
+            // Pattern: 11_pp_0101
+            0xC5, 0xD5, 0xE5, 0xF5 => {
+                const rp: u2 = @truncate((opcode >> 4) & 0x03);
+                self.push(self.r16stk(@enumFromInt(rp)).*);
                 return 16;
             },
 
-            // ADD A,n
-            0xC6 => {
-                self.add(self.readPc(), false);
+            // ALU A,n immediate (ADD, ADC, SUB, SBC, AND, XOR, OR, CP)
+            // Pattern: 11_xxx_110 where xxx = ALU operation
+            0xC6, 0xCE, 0xD6, 0xDE, 0xE6, 0xEE, 0xF6, 0xFE => {
+                const alu_op: u3 = @truncate((opcode >> 3) & 0x07);
+                self.aluDispatch(alu_op, self.readPc());
                 return 8;
             },
 
-            // RST 00
-            0xC7 => {
-                self.rst(0x00);
+            // RST n (00, 08, 10, 18, 20, 28, 30, 38)
+            // Pattern: 11_xxx_111 where address = xxx * 8
+            0xC7, 0xCF, 0xD7, 0xDF, 0xE7, 0xEF, 0xF7, 0xFF => {
+                self.rst(opcode & 0x38);
                 return 16;
             },
 
@@ -743,26 +764,8 @@ pub const Cpu = struct {
                 return 24;
             },
 
-            // ADC A,n
-            0xCE => {
-                self.add(self.readPc(), true);
-                return 8;
-            },
-
-            // RST 08
-            0xCF => {
-                self.rst(0x08);
-                return 16;
-            },
-
             // RET NC
             0xD0 => self.ret(!self.getFlag(FLAG_C)),
-
-            // POP DE
-            0xD1 => {
-                self.de = self.pop();
-                return 12;
-            },
 
             // JP NC,nn
             0xD2 => self.jp(!self.getFlag(FLAG_C)),
@@ -775,24 +778,6 @@ pub const Cpu = struct {
 
             // CALL NC,nn
             0xD4 => self.call(!self.getFlag(FLAG_C)),
-
-            // PUSH DE
-            0xD5 => {
-                self.push(self.de);
-                return 16;
-            },
-
-            // SUB A,n
-            0xD6 => {
-                self.sub(self.readPc(), false);
-                return 8;
-            },
-
-            // RST 10
-            0xD7 => {
-                self.rst(0x10);
-                return 16;
-            },
 
             // RET C
             0xD8 => self.ret(self.getFlag(FLAG_C)),
@@ -822,28 +807,10 @@ pub const Cpu = struct {
                 return 4;
             },
 
-            // SBC A,n
-            0xDE => {
-                self.sub(self.readPc(), true);
-                return 8;
-            },
-
-            // RST 18
-            0xDF => {
-                self.rst(0x18);
-                return 16;
-            },
-
             // LDH (n),A
             0xE0 => {
                 const offset = self.readPc();
                 self.write(0xFF00 | @as(u16, offset), self.r8(.a).*);
-                return 12;
-            },
-
-            // POP HL
-            0xE1 => {
-                self.hl = self.pop();
                 return 12;
             },
 
@@ -863,24 +830,6 @@ pub const Cpu = struct {
             0xE4 => {
                 self.invalidOp(0xE4);
                 return 4;
-            },
-
-            // PUSH HL
-            0xE5 => {
-                self.push(self.hl);
-                return 16;
-            },
-
-            // AND A,n
-            0xE6 => {
-                self.andA(self.readPc());
-                return 8;
-            },
-
-            // RST 20
-            0xE7 => {
-                self.rst(0x20);
-                return 16;
             },
 
             // ADD SP,n
@@ -922,28 +871,10 @@ pub const Cpu = struct {
                 return 4;
             },
 
-            // XOR A,n
-            0xEE => {
-                self.xorA(self.readPc());
-                return 8;
-            },
-
-            // RST 28
-            0xEF => {
-                self.rst(0x28);
-                return 16;
-            },
-
             // LDH A,(n)
             0xF0 => {
                 const offset = self.readPc();
                 self.r8(.a).* = self.read(0xFF00 | @as(u16, offset));
-                return 12;
-            },
-
-            // POP AF
-            0xF1 => {
-                self.af = self.pop() & 0xFFF0;
                 return 12;
             },
 
@@ -963,24 +894,6 @@ pub const Cpu = struct {
             0xF4 => {
                 self.invalidOp(0xF4);
                 return 4;
-            },
-
-            // PUSH AF
-            0xF5 => {
-                self.push(self.af);
-                return 16;
-            },
-
-            // OR A,n
-            0xF6 => {
-                self.orA(self.readPc());
-                return 8;
-            },
-
-            // RST 30
-            0xF7 => {
-                self.rst(0x30);
-                return 16;
             },
 
             // LD HL,SP+n
@@ -1021,89 +934,52 @@ pub const Cpu = struct {
                 self.invalidOp(0xFD);
                 return 4;
             },
-
-            // CP A,n
-            0xFE => {
-                self.cp(self.readPc());
-                return 8;
-            },
-
-            // RST 38
-            0xFF => {
-                self.rst(0x38);
-                return 16;
-            },
         };
     }
 
     fn executeCb(self: *Self) u32 {
         const opcode = self.readPc();
-        const op = (opcode >> 6) & 0x03;
-        const bit_num = (opcode >> 3) & 0x07;
-        const reg = opcode & 0x07;
+        const op: u2 = @truncate((opcode >> 6) & 0x03);
+        const bit_num: u3 = @truncate((opcode >> 3) & 0x07);
+        const reg: u3 = @truncate(opcode & 0x07);
 
-        // Get operand value
-        var value = switch (reg) {
-            0 => self.r8(.b).*,
-            1 => self.r8(.c).*,
-            2 => self.r8(.d).*,
-            3 => self.r8(.e).*,
-            4 => self.r8(.h).*,
-            5 => self.r8(.l).*,
-            6 => self.read(self.hl),
-            7 => self.r8(.a).*,
-            else => unreachable,
-        };
-
+        var value = self.readR8Idx(reg);
         const is_mem = reg == 6;
-        var cycles: u32 = if (is_mem) 16 else 8;
 
         switch (op) {
             0 => {
                 // Rotate/shift operations
                 value = switch (bit_num) {
-                    0 => self.rlc(value), // RLC
-                    1 => self.rrc(value), // RRC
-                    2 => self.rl(value), // RL
-                    3 => self.rr(value), // RR
-                    4 => self.sla(value), // SLA
-                    5 => self.sra(value), // SRA
-                    6 => self.swap(value), // SWAP
-                    7 => self.srl(value), // SRL
-                    else => unreachable,
+                    0 => self.rlc(value),
+                    1 => self.rrc(value),
+                    2 => self.rl(value),
+                    3 => self.rr(value),
+                    4 => self.sla(value),
+                    5 => self.sra(value),
+                    6 => self.swap(value),
+                    7 => self.srl(value),
                 };
+                self.writeR8Idx(reg, value);
+                return if (is_mem) 16 else 8;
             },
             1 => {
-                // BIT
+                // BIT - doesn't modify value
                 self.bit(bit_num, value);
-                if (is_mem) cycles = 12;
-                return cycles;
+                return if (is_mem) 12 else 8;
             },
             2 => {
                 // RES
-                value = value & ~(@as(u8, 1) << @intCast(bit_num));
+                value = value & ~(@as(u8, 1) << bit_num);
+                self.writeR8Idx(reg, value);
+                return if (is_mem) 16 else 8;
             },
             3 => {
                 // SET
-                value = value | (@as(u8, 1) << @intCast(bit_num));
+                value = value | (@as(u8, 1) << bit_num);
+                self.writeR8Idx(reg, value);
+                return if (is_mem) 16 else 8;
             },
-            else => unreachable,
         }
-
-        // Store result
-        switch (reg) {
-            0 => self.r8(.b).* = value,
-            1 => self.r8(.c).* = value,
-            2 => self.r8(.d).* = value,
-            3 => self.r8(.e).* = value,
-            4 => self.r8(.h).* = value,
-            5 => self.r8(.l).* = value,
-            6 => self.write(self.hl, value),
-            7 => self.r8(.a).* = value,
-            else => unreachable,
-        }
-
-        return cycles;
     }
 
     // ALU operations
