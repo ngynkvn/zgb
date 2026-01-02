@@ -81,6 +81,41 @@ pub const Cpu = struct {
         };
     }
 
+    // Register decoding for opcodes
+    // Maps 3-bit register field in opcodes to Reg8 (null = (HL) indirect)
+    const REG_DECODE: [8]?Reg8 = .{ .b, .c, .d, .e, .h, .l, null, .a };
+
+    /// Read from register or (HL) based on 3-bit opcode field
+    inline fn readR8Idx(self: *Self, idx: u3) u8 {
+        return if (REG_DECODE[idx]) |reg|
+            self.r8(reg).*
+        else
+            self.read(self.hl);
+    }
+
+    /// Write to register or (HL) based on 3-bit opcode field
+    inline fn writeR8Idx(self: *Self, idx: u3, value: u8) void {
+        if (REG_DECODE[idx]) |reg| {
+            self.r8(reg).* = value;
+        } else {
+            self.write(self.hl, value);
+        }
+    }
+
+    /// Dispatch ALU operation by 3-bit op field
+    inline fn aluDispatch(self: *Self, op: u3, val: u8) void {
+        switch (op) {
+            0 => self.add(val, false), // ADD
+            1 => self.add(val, true), // ADC
+            2 => self.sub(val, false), // SUB
+            3 => self.sub(val, true), // SBC
+            4 => self.andA(val),
+            5 => self.xorA(val),
+            6 => self.orA(val),
+            7 => self.cp(val),
+        }
+    }
+
     // Flag helpers
     fn getFlag(self: *Self, flag: u8) bool {
         return (self.r8(.f).* & flag) != 0;
@@ -202,993 +237,493 @@ pub const Cpu = struct {
             0x00 => 4,
 
             // LD BC,nn
-            0x01 => blk: {
+            0x01 => {
                 const value = self.readPc16();
                 self.bc = value;
-                break :blk 12;
+                return 12;
             },
 
             // LD (BC),A
-            0x02 => blk: {
+            0x02 => {
                 self.write(self.bc, self.r8(.a).*);
-                break :blk 8;
+                return 8;
             },
 
             // INC BC
-            0x03 => blk: {
+            0x03 => {
                 self.bc = self.bc +% 1;
-                break :blk 8;
+                return 8;
             },
 
             // INC B
-            0x04 => blk: {
+            0x04 => {
                 const b = self.r8(.b);
                 b.* = self.inc(b.*);
-                break :blk 4;
+                return 4;
             },
 
             // DEC B
-            0x05 => blk: {
+            0x05 => {
                 const b = self.r8(.b);
                 b.* = self.dec(b.*);
-                break :blk 4;
+                return 4;
             },
 
             // LD B,n
-            0x06 => blk: {
+            0x06 => {
                 const b = self.r8(.b);
                 b.* = self.readPc();
-                break :blk 8;
+                return 8;
             },
 
             // RLCA
-            0x07 => blk: {
+            0x07 => {
                 const a = self.r8(.a);
                 const v, const overflow = @shlWithOverflow(a.*, 1);
                 a.* = (v << 1) | overflow;
                 self.setFlags(false, false, false, overflow == 1);
-                break :blk 4;
+                return 4;
             },
 
             // LD (nn),SP
-            0x08 => blk: {
+            0x08 => {
                 const addr = self.readPc16();
                 self.write(addr, @truncate(self.sp));
                 self.write(addr +% 1, @truncate(self.sp >> 8));
-                break :blk 20;
+                return 20;
             },
 
             // ADD HL,BC
-            0x09 => blk: {
+            0x09 => {
                 self.addHl(self.bc);
-                break :blk 8;
+                return 8;
             },
 
             // LD A,(BC)
-            0x0A => blk: {
+            0x0A => {
                 const a = self.r8(.a);
                 a.* = self.read(self.bc);
-                break :blk 8;
+                return 8;
             },
 
             // DEC BC
-            0x0B => blk: {
+            0x0B => {
                 self.bc = self.bc -% 1;
-                break :blk 8;
+                return 8;
             },
 
             // INC C
-            0x0C => blk: {
+            0x0C => {
                 const c = self.r8(.c);
                 c.* = self.inc(c.*);
-                break :blk 4;
+                return 4;
             },
 
             // DEC C
-            0x0D => blk: {
+            0x0D => {
                 const c = self.r8(.c);
                 c.* = self.dec(c.*);
-                break :blk 4;
+                return 4;
             },
 
             // LD C,n
-            0x0E => blk: {
+            0x0E => {
                 const c = self.r8(.c);
                 c.* = self.readPc();
-                break :blk 8;
+                return 8;
             },
 
             // RRCA
-            0x0F => blk: {
+            0x0F => {
                 const a = self.r8(.a);
                 const carry = a.* & 1;
                 a.* = (a.* >> 1) | (carry << 7);
                 self.setFlags(false, false, false, carry == 1);
-                break :blk 4;
+                return 4;
             },
 
             // STOP
-            0x10 => blk: {
+            0x10 => {
                 _ = self.readPc(); // Skip byte after STOP
                 self.stopped = true;
-                break :blk 4;
+                return 4;
             },
 
             // LD DE,nn
-            0x11 => blk: {
+            0x11 => {
                 const value = self.readPc16();
                 self.de = value;
-                break :blk 12;
+                return 12;
             },
 
             // LD (DE),A
-            0x12 => blk: {
+            0x12 => {
                 self.write(self.de, self.r8(.a).*);
-                break :blk 8;
+                return 8;
             },
 
             // INC DE
-            0x13 => blk: {
+            0x13 => {
                 self.de = self.de +% 1;
-                break :blk 8;
+                return 8;
             },
 
             // INC D
-            0x14 => blk: {
+            0x14 => {
                 const d = self.r8(.d);
                 d.* = self.inc(d.*);
-                break :blk 4;
+                return 4;
             },
 
             // DEC D
-            0x15 => blk: {
+            0x15 => {
                 const d = self.r8(.d);
                 d.* = self.dec(d.*);
-                break :blk 4;
+                return 4;
             },
 
             // LD D,n
-            0x16 => blk: {
+            0x16 => {
                 const d = self.r8(.d);
                 d.* = self.readPc();
-                break :blk 8;
+                return 8;
             },
 
             // RLA
-            0x17 => blk: {
+            0x17 => {
                 const old_carry: u8 = if (self.getFlag(FLAG_C)) 1 else 0;
                 const a = self.r8(.a);
                 const new_carry = (a.* >> 7) & 1;
                 a.* = (a.* << 1) | old_carry;
                 self.setFlags(false, false, false, new_carry == 1);
-                break :blk 4;
+                return 4;
             },
 
             // JR n
-            0x18 => blk: {
+            0x18 => {
                 const offset: i8 = @bitCast(self.readPc());
                 const pc_i32: i32 = @intCast(self.pc);
                 const new_pc: i32 = pc_i32 +% offset;
                 self.pc = @intCast(@as(u32, @bitCast(new_pc)) & 0xFFFF);
-                break :blk 12;
+                return 12;
             },
 
             // ADD HL,DE
-            0x19 => blk: {
+            0x19 => {
                 self.addHl(self.de);
-                break :blk 8;
+                return 8;
             },
 
             // LD A,(DE)
-            0x1A => blk: {
+            0x1A => {
                 const a = self.r8(.a);
                 a.* = self.read(self.de);
-                break :blk 8;
+                return 8;
             },
 
             // DEC DE
-            0x1B => blk: {
+            0x1B => {
                 self.de = self.de -% 1;
-                break :blk 8;
+                return 8;
             },
 
             // INC E
-            0x1C => blk: {
+            0x1C => {
                 const e = self.r8(.e);
                 e.* = self.inc(e.*);
-                break :blk 4;
+                return 4;
             },
 
             // DEC E
-            0x1D => blk: {
+            0x1D => {
                 const e = self.r8(.e);
                 e.* = self.dec(e.*);
-                break :blk 4;
+                return 4;
             },
 
             // LD E,n
-            0x1E => blk: {
+            0x1E => {
                 const e = self.r8(.e);
                 e.* = self.readPc();
-                break :blk 8;
+                return 8;
             },
 
             // RRA
-            0x1F => blk: {
+            0x1F => {
                 const old_carry: u8 = if (self.getFlag(FLAG_C)) 0x80 else 0;
                 const a = self.r8(.a);
                 const new_carry = a.* & 1;
                 a.* = (a.* >> 1) | old_carry;
                 self.setFlags(false, false, false, new_carry == 1);
-                break :blk 4;
+                return 4;
             },
 
             // JR NZ,n
             0x20 => self.jr(!self.getFlag(FLAG_Z)),
 
             // LD HL,nn
-            0x21 => blk: {
+            0x21 => {
                 const value = self.readPc16();
                 self.hl = value;
-                break :blk 12;
+                return 12;
             },
 
             // LD (HL+),A
-            0x22 => blk: {
+            0x22 => {
                 self.write(self.hl, self.r8(.a).*);
                 self.hl = self.hl +% 1;
-                break :blk 8;
+                return 8;
             },
 
             // INC HL
-            0x23 => blk: {
+            0x23 => {
                 self.hl = self.hl +% 1;
-                break :blk 8;
+                return 8;
             },
 
             // INC H
-            0x24 => blk: {
+            0x24 => {
                 const h = self.r8(.h);
                 h.* = self.inc(h.*);
-                break :blk 4;
+                return 4;
             },
 
             // DEC H
-            0x25 => blk: {
+            0x25 => {
                 const h = self.r8(.h);
                 h.* = self.dec(h.*);
-                break :blk 4;
+                return 4;
             },
 
             // LD H,n
-            0x26 => blk: {
+            0x26 => {
                 const h = self.r8(.h);
                 h.* = self.readPc();
-                break :blk 8;
+                return 8;
             },
 
             // DAA
-            0x27 => blk: {
+            0x27 => {
                 self.daa();
-                break :blk 4;
+                return 4;
             },
 
             // JR Z,n
             0x28 => self.jr(self.getFlag(FLAG_Z)),
 
             // ADD HL,HL
-            0x29 => blk: {
+            0x29 => {
                 self.addHl(self.hl);
-                break :blk 8;
+                return 8;
             },
 
             // LD A,(HL+)
-            0x2A => blk: {
+            0x2A => {
                 const a = self.r8(.a);
                 a.* = self.read(self.hl);
                 self.hl = self.hl +% 1;
-                break :blk 8;
+                return 8;
             },
 
             // DEC HL
-            0x2B => blk: {
+            0x2B => {
                 self.hl = self.hl -% 1;
-                break :blk 8;
+                return 8;
             },
 
             // INC L
-            0x2C => blk: {
+            0x2C => {
                 const l = self.r8(.l);
                 l.* = self.inc(l.*);
-                break :blk 4;
+                return 4;
             },
 
             // DEC L
-            0x2D => blk: {
+            0x2D => {
                 const l = self.r8(.l);
                 l.* = self.dec(l.*);
-                break :blk 4;
+                return 4;
             },
 
             // LD L,n
-            0x2E => blk: {
+            0x2E => {
                 self.r8(.l).* = self.readPc();
-                break :blk 8;
+                return 8;
             },
 
             // CPL
-            0x2F => blk: {
+            0x2F => {
                 self.r8(.a).* = ~self.r8(.a).*;
                 self.setFlags(null, true, true, null);
-                break :blk 4;
+                return 4;
             },
 
             // JR NC,n
             0x30 => self.jr(!self.getFlag(FLAG_C)),
 
             // LD SP,nn
-            0x31 => blk: {
+            0x31 => {
                 self.sp = self.readPc16();
-                break :blk 12;
+                return 12;
             },
 
             // LD (HL-),A
-            0x32 => blk: {
+            0x32 => {
                 self.write(self.hl, self.r8(.a).*);
                 self.hl = self.hl -% 1;
-                break :blk 8;
+                return 8;
             },
 
             // INC SP
-            0x33 => blk: {
+            0x33 => {
                 self.sp +%= 1;
-                break :blk 8;
+                return 8;
             },
 
             // INC (HL)
-            0x34 => blk: {
+            0x34 => {
                 const value = self.inc(self.read(self.hl));
                 self.write(self.hl, value);
-                break :blk 12;
+                return 12;
             },
 
             // DEC (HL)
-            0x35 => blk: {
+            0x35 => {
                 const value = self.dec(self.read(self.hl));
                 self.write(self.hl, value);
-                break :blk 12;
+                return 12;
             },
 
             // LD (HL),n
-            0x36 => blk: {
+            0x36 => {
                 self.write(self.hl, self.readPc());
-                break :blk 12;
+                return 12;
             },
 
             // SCF
-            0x37 => blk: {
+            0x37 => {
                 self.setFlags(null, false, false, true);
-                break :blk 4;
+                return 4;
             },
 
             // JR C,n
             0x38 => self.jr(self.getFlag(FLAG_C)),
 
             // ADD HL,SP
-            0x39 => blk: {
+            0x39 => {
                 self.addHl(self.sp);
-                break :blk 8;
+                return 8;
             },
 
             // LD A,(HL-)
-            0x3A => blk: {
+            0x3A => {
                 self.r8(.a).* = self.read(self.hl);
                 self.hl = self.hl -% 1;
-                break :blk 8;
+                return 8;
             },
 
             // DEC SP
-            0x3B => blk: {
+            0x3B => {
                 self.sp -%= 1;
-                break :blk 8;
+                return 8;
             },
 
             // INC A
-            0x3C => blk: {
+            0x3C => {
                 self.r8(.a).* = self.inc(self.r8(.a).*);
-                break :blk 4;
+                return 4;
             },
 
             // DEC A
-            0x3D => blk: {
+            0x3D => {
                 self.r8(.a).* = self.dec(self.r8(.a).*);
-                break :blk 4;
+                return 4;
             },
 
             // LD A,n
-            0x3E => blk: {
+            0x3E => {
                 self.r8(.a).* = self.readPc();
-                break :blk 8;
+                return 8;
             },
 
             // CCF
-            0x3F => blk: {
+            0x3F => {
                 self.setFlags(null, false, false, !self.getFlag(FLAG_C));
-                break :blk 4;
+                return 4;
             },
 
-            // LD B,r and LD B,(HL)
-            0x40 => 4, // LD B,B
-            0x41 => blk: {
-                self.r8(.b).* = self.r8(.c).*;
-                break :blk 4;
-            },
-            0x42 => blk: {
-                self.r8(.b).* = self.r8(.d).*;
-                break :blk 4;
-            },
-            0x43 => blk: {
-                self.r8(.b).* = self.r8(.e).*;
-                break :blk 4;
-            },
-            0x44 => blk: {
-                self.r8(.b).* = self.r8(.h).*;
-                break :blk 4;
-            },
-            0x45 => blk: {
-                self.r8(.b).* = self.r8(.l).*;
-                break :blk 4;
-            },
-            0x46 => blk: {
-                self.r8(.b).* = self.read(self.hl);
-                break :blk 8;
-            },
-            0x47 => blk: {
-                self.r8(.b).* = self.r8(.a).*;
-                break :blk 4;
-            },
-
-            // LD C,r and LD C,(HL)
-            0x48 => blk: {
-                self.r8(.c).* = self.r8(.b).*;
-                break :blk 4;
-            },
-            0x49 => 4, // LD C,C
-            0x4A => blk: {
-                self.r8(.c).* = self.r8(.d).*;
-                break :blk 4;
-            },
-            0x4B => blk: {
-                self.r8(.c).* = self.r8(.e).*;
-                break :blk 4;
-            },
-            0x4C => blk: {
-                self.r8(.c).* = self.r8(.h).*;
-                break :blk 4;
-            },
-            0x4D => blk: {
-                self.r8(.c).* = self.r8(.l).*;
-                break :blk 4;
-            },
-            0x4E => blk: {
-                self.r8(.c).* = self.read(self.hl);
-                break :blk 8;
-            },
-            0x4F => blk: {
-                self.r8(.c).* = self.r8(.a).*;
-                break :blk 4;
-            },
-
-            // LD D,r and LD D,(HL)
-            0x50 => blk: {
-                self.r8(.d).* = self.r8(.b).*;
-                break :blk 4;
-            },
-            0x51 => blk: {
-                self.r8(.d).* = self.r8(.c).*;
-                break :blk 4;
-            },
-            0x52 => 4, // LD D,D
-            0x53 => blk: {
-                self.r8(.d).* = self.r8(.e).*;
-                break :blk 4;
-            },
-            0x54 => blk: {
-                self.r8(.d).* = self.r8(.h).*;
-                break :blk 4;
-            },
-            0x55 => blk: {
-                self.r8(.d).* = self.r8(.l).*;
-                break :blk 4;
-            },
-            0x56 => blk: {
-                self.r8(.d).* = self.read(self.hl);
-                break :blk 8;
-            },
-            0x57 => blk: {
-                self.r8(.d).* = self.r8(.a).*;
-                break :blk 4;
-            },
-
-            // LD E,r and LD E,(HL)
-            0x58 => blk: {
-                self.r8(.e).* = self.r8(.b).*;
-                break :blk 4;
-            },
-            0x59 => blk: {
-                self.r8(.e).* = self.r8(.c).*;
-                break :blk 4;
-            },
-            0x5A => blk: {
-                self.r8(.e).* = self.r8(.d).*;
-                break :blk 4;
-            },
-            0x5B => 4, // LD E,E
-            0x5C => blk: {
-                self.r8(.e).* = self.r8(.h).*;
-                break :blk 4;
-            },
-            0x5D => blk: {
-                self.r8(.e).* = self.r8(.l).*;
-                break :blk 4;
-            },
-            0x5E => blk: {
-                self.r8(.e).* = self.read(self.hl);
-                break :blk 8;
-            },
-            0x5F => blk: {
-                self.r8(.e).* = self.r8(.a).*;
-                break :blk 4;
-            },
-
-            // LD H,r and LD H,(HL)
-            0x60 => blk: {
-                self.r8(.h).* = self.r8(.b).*;
-                break :blk 4;
-            },
-            0x61 => blk: {
-                self.r8(.h).* = self.r8(.c).*;
-                break :blk 4;
-            },
-            0x62 => blk: {
-                self.r8(.h).* = self.r8(.d).*;
-                break :blk 4;
-            },
-            0x63 => blk: {
-                self.r8(.h).* = self.r8(.e).*;
-                break :blk 4;
-            },
-            0x64 => 4, // LD H,H
-            0x65 => blk: {
-                self.r8(.h).* = self.r8(.l).*;
-                break :blk 4;
-            },
-            0x66 => blk: {
-                self.r8(.h).* = self.read(self.hl);
-                break :blk 8;
-            },
-            0x67 => blk: {
-                self.r8(.h).* = self.r8(.a).*;
-                break :blk 4;
-            },
-
-            // LD L,r and LD L,(HL)
-            0x68 => blk: {
-                self.r8(.l).* = self.r8(.b).*;
-                break :blk 4;
-            },
-            0x69 => blk: {
-                self.r8(.l).* = self.r8(.c).*;
-                break :blk 4;
-            },
-            0x6A => blk: {
-                self.r8(.l).* = self.r8(.d).*;
-                break :blk 4;
-            },
-            0x6B => blk: {
-                self.r8(.l).* = self.r8(.e).*;
-                break :blk 4;
-            },
-            0x6C => blk: {
-                self.r8(.l).* = self.r8(.h).*;
-                break :blk 4;
-            },
-            0x6D => 4, // LD L,L
-            0x6E => blk: {
-                self.r8(.l).* = self.read(self.hl);
-                break :blk 8;
-            },
-            0x6F => blk: {
-                self.r8(.l).* = self.r8(.a).*;
-                break :blk 4;
-            },
-
-            // LD (HL),r
-            0x70 => blk: {
-                self.write(self.hl, self.r8(.b).*);
-                break :blk 8;
-            },
-            0x71 => blk: {
-                self.write(self.hl, self.r8(.c).*);
-                break :blk 8;
-            },
-            0x72 => blk: {
-                self.write(self.hl, self.r8(.d).*);
-                break :blk 8;
-            },
-            0x73 => blk: {
-                self.write(self.hl, self.r8(.e).*);
-                break :blk 8;
-            },
-            0x74 => blk: {
-                self.write(self.hl, self.r8(.h).*);
-                break :blk 8;
-            },
-            0x75 => blk: {
-                self.write(self.hl, self.r8(.l).*);
-                break :blk 8;
+            // LD r,r' block (0x40-0x7F) - except 0x76 (HALT)
+            // Opcode encodes: dst in bits 5-3, src in bits 2-0
+            0x40...0x75, 0x77...0x7F => {
+                const dst: u3 = @truncate((opcode >> 3) & 0x07);
+                const src: u3 = @truncate(opcode & 0x07);
+                const val = self.readR8Idx(src);
+                self.writeR8Idx(dst, val);
+                return if (src == 6 or dst == 6) 8 else 4;
             },
 
             // HALT
-            0x76 => blk: {
+            0x76 => {
                 self.halted = true;
-                break :blk 4;
+                return 4;
             },
 
-            0x77 => blk: {
-                self.write(self.hl, self.r8(.a).*);
-                break :blk 8;
-            },
-
-            // LD A,r and LD A,(HL)
-            0x78 => blk: {
-                self.r8(.a).* = self.r8(.b).*;
-                break :blk 4;
-            },
-            0x79 => blk: {
-                self.r8(.a).* = self.r8(.c).*;
-                break :blk 4;
-            },
-            0x7A => blk: {
-                self.r8(.a).* = self.r8(.d).*;
-                break :blk 4;
-            },
-            0x7B => blk: {
-                self.r8(.a).* = self.r8(.e).*;
-                break :blk 4;
-            },
-            0x7C => blk: {
-                self.r8(.a).* = self.r8(.h).*;
-                break :blk 4;
-            },
-            0x7D => blk: {
-                self.r8(.a).* = self.r8(.l).*;
-                break :blk 4;
-            },
-            0x7E => blk: {
-                self.r8(.a).* = self.read(self.hl);
-                break :blk 8;
-            },
-            0x7F => 4, // LD A,A
-
-            // ADD A,r
-            0x80 => blk: {
-                self.add(self.r8(.b).*, false);
-                break :blk 4;
-            },
-            0x81 => blk: {
-                self.add(self.r8(.c).*, false);
-                break :blk 4;
-            },
-            0x82 => blk: {
-                self.add(self.r8(.d).*, false);
-                break :blk 4;
-            },
-            0x83 => blk: {
-                self.add(self.r8(.e).*, false);
-                break :blk 4;
-            },
-            0x84 => blk: {
-                self.add(self.r8(.h).*, false);
-                break :blk 4;
-            },
-            0x85 => blk: {
-                self.add(self.r8(.l).*, false);
-                break :blk 4;
-            },
-            0x86 => blk: {
-                self.add(self.read(self.hl), false);
-                break :blk 8;
-            },
-            0x87 => blk: {
-                self.add(self.r8(.a).*, false);
-                break :blk 4;
-            },
-
-            // ADC A,r
-            0x88 => blk: {
-                self.add(self.r8(.b).*, true);
-                break :blk 4;
-            },
-            0x89 => blk: {
-                self.add(self.r8(.c).*, true);
-                break :blk 4;
-            },
-            0x8A => blk: {
-                self.add(self.r8(.d).*, true);
-                break :blk 4;
-            },
-            0x8B => blk: {
-                self.add(self.r8(.e).*, true);
-                break :blk 4;
-            },
-            0x8C => blk: {
-                self.add(self.r8(.h).*, true);
-                break :blk 4;
-            },
-            0x8D => blk: {
-                self.add(self.r8(.l).*, true);
-                break :blk 4;
-            },
-            0x8E => blk: {
-                self.add(self.read(self.hl), true);
-                break :blk 8;
-            },
-            0x8F => blk: {
-                self.add(self.r8(.a).*, true);
-                break :blk 4;
-            },
-
-            // SUB A,r
-            0x90 => blk: {
-                self.sub(self.r8(.b).*, false);
-                break :blk 4;
-            },
-            0x91 => blk: {
-                self.sub(self.r8(.c).*, false);
-                break :blk 4;
-            },
-            0x92 => blk: {
-                self.sub(self.r8(.d).*, false);
-                break :blk 4;
-            },
-            0x93 => blk: {
-                self.sub(self.r8(.e).*, false);
-                break :blk 4;
-            },
-            0x94 => blk: {
-                self.sub(self.r8(.h).*, false);
-                break :blk 4;
-            },
-            0x95 => blk: {
-                self.sub(self.r8(.l).*, false);
-                break :blk 4;
-            },
-            0x96 => blk: {
-                self.sub(self.read(self.hl), false);
-                break :blk 8;
-            },
-            0x97 => blk: {
-                self.sub(self.r8(.a).*, false);
-                break :blk 4;
-            },
-
-            // SBC A,r
-            0x98 => blk: {
-                self.sub(self.r8(.b).*, true);
-                break :blk 4;
-            },
-            0x99 => blk: {
-                self.sub(self.r8(.c).*, true);
-                break :blk 4;
-            },
-            0x9A => blk: {
-                self.sub(self.r8(.d).*, true);
-                break :blk 4;
-            },
-            0x9B => blk: {
-                self.sub(self.r8(.e).*, true);
-                break :blk 4;
-            },
-            0x9C => blk: {
-                self.sub(self.r8(.h).*, true);
-                break :blk 4;
-            },
-            0x9D => blk: {
-                self.sub(self.r8(.l).*, true);
-                break :blk 4;
-            },
-            0x9E => blk: {
-                self.sub(self.read(self.hl), true);
-                break :blk 8;
-            },
-            0x9F => blk: {
-                self.sub(self.r8(.a).*, true);
-                break :blk 4;
-            },
-
-            // AND A,r
-            0xA0 => blk: {
-                self.andA(self.r8(.b).*);
-                break :blk 4;
-            },
-            0xA1 => blk: {
-                self.andA(self.r8(.c).*);
-                break :blk 4;
-            },
-            0xA2 => blk: {
-                self.andA(self.r8(.d).*);
-                break :blk 4;
-            },
-            0xA3 => blk: {
-                self.andA(self.r8(.e).*);
-                break :blk 4;
-            },
-            0xA4 => blk: {
-                self.andA(self.r8(.h).*);
-                break :blk 4;
-            },
-            0xA5 => blk: {
-                self.andA(self.r8(.l).*);
-                break :blk 4;
-            },
-            0xA6 => blk: {
-                self.andA(self.read(self.hl));
-                break :blk 8;
-            },
-            0xA7 => blk: {
-                self.andA(self.r8(.a).*);
-                break :blk 4;
-            },
-
-            // XOR A,r
-            0xA8 => blk: {
-                self.xorA(self.r8(.b).*);
-                break :blk 4;
-            },
-            0xA9 => blk: {
-                self.xorA(self.r8(.c).*);
-                break :blk 4;
-            },
-            0xAA => blk: {
-                self.xorA(self.r8(.d).*);
-                break :blk 4;
-            },
-            0xAB => blk: {
-                self.xorA(self.r8(.e).*);
-                break :blk 4;
-            },
-            0xAC => blk: {
-                self.xorA(self.r8(.h).*);
-                break :blk 4;
-            },
-            0xAD => blk: {
-                self.xorA(self.r8(.l).*);
-                break :blk 4;
-            },
-            0xAE => blk: {
-                self.xorA(self.read(self.hl));
-                break :blk 8;
-            },
-            0xAF => blk: {
-                self.xorA(self.r8(.a).*);
-                break :blk 4;
-            },
-
-            // OR A,r
-            0xB0 => blk: {
-                self.orA(self.r8(.b).*);
-                break :blk 4;
-            },
-            0xB1 => blk: {
-                self.orA(self.r8(.c).*);
-                break :blk 4;
-            },
-            0xB2 => blk: {
-                self.orA(self.r8(.d).*);
-                break :blk 4;
-            },
-            0xB3 => blk: {
-                self.orA(self.r8(.e).*);
-                break :blk 4;
-            },
-            0xB4 => blk: {
-                self.orA(self.r8(.h).*);
-                break :blk 4;
-            },
-            0xB5 => blk: {
-                self.orA(self.r8(.l).*);
-                break :blk 4;
-            },
-            0xB6 => blk: {
-                self.orA(self.read(self.hl));
-                break :blk 8;
-            },
-            0xB7 => blk: {
-                self.orA(self.r8(.a).*);
-                break :blk 4;
-            },
-
-            // CP A,r
-            0xB8 => blk: {
-                self.cp(self.r8(.b).*);
-                break :blk 4;
-            },
-            0xB9 => blk: {
-                self.cp(self.r8(.c).*);
-                break :blk 4;
-            },
-            0xBA => blk: {
-                self.cp(self.r8(.d).*);
-                break :blk 4;
-            },
-            0xBB => blk: {
-                self.cp(self.r8(.e).*);
-                break :blk 4;
-            },
-            0xBC => blk: {
-                self.cp(self.r8(.h).*);
-                break :blk 4;
-            },
-            0xBD => blk: {
-                self.cp(self.r8(.l).*);
-                break :blk 4;
-            },
-            0xBE => blk: {
-                self.cp(self.read(self.hl));
-                break :blk 8;
-            },
-            0xBF => blk: {
-                self.cp(self.r8(.a).*);
-                break :blk 4;
+            // ALU A,r block (0x80-0xBF)
+            // Opcode encodes: op in bits 5-3, src in bits 2-0
+            0x80...0xBF => {
+                const alu_op: u3 = @truncate((opcode >> 3) & 0x07);
+                const src: u3 = @truncate(opcode & 0x07);
+                const val = self.readR8Idx(src);
+                self.aluDispatch(alu_op, val);
+                return if (src == 6) 8 else 4;
             },
 
             // RET NZ
             0xC0 => self.ret(!self.getFlag(FLAG_Z)),
 
             // POP BC
-            0xC1 => blk: {
+            0xC1 => {
                 self.bc = self.pop();
-                break :blk 12;
+                return 12;
             },
 
             // JP NZ,nn
             0xC2 => self.jp(!self.getFlag(FLAG_Z)),
 
             // JP nn
-            0xC3 => blk: {
+            0xC3 => {
                 self.pc = self.readPc16();
-                break :blk 16;
+                return 16;
             },
 
             // CALL NZ,nn
             0xC4 => self.call(!self.getFlag(FLAG_Z)),
 
             // PUSH BC
-            0xC5 => blk: {
+            0xC5 => {
                 self.push(self.bc);
-                break :blk 16;
+                return 16;
             },
 
             // ADD A,n
-            0xC6 => blk: {
+            0xC6 => {
                 self.add(self.readPc(), false);
-                break :blk 8;
+                return 8;
             },
 
             // RST 00
-            0xC7 => blk: {
+            0xC7 => {
                 self.rst(0x00);
-                break :blk 16;
+                return 16;
             },
 
             // RET Z
             0xC8 => self.ret(self.getFlag(FLAG_Z)),
 
             // RET
-            0xC9 => blk: {
+            0xC9 => {
                 self.pc = self.pop();
-                break :blk 16;
+                return 16;
             },
 
             // JP Z,nn
@@ -1201,302 +736,302 @@ pub const Cpu = struct {
             0xCC => self.call(self.getFlag(FLAG_Z)),
 
             // CALL nn
-            0xCD => blk: {
+            0xCD => {
                 const addr = self.readPc16();
                 self.push(self.pc);
                 self.pc = addr;
-                break :blk 24;
+                return 24;
             },
 
             // ADC A,n
-            0xCE => blk: {
+            0xCE => {
                 self.add(self.readPc(), true);
-                break :blk 8;
+                return 8;
             },
 
             // RST 08
-            0xCF => blk: {
+            0xCF => {
                 self.rst(0x08);
-                break :blk 16;
+                return 16;
             },
 
             // RET NC
             0xD0 => self.ret(!self.getFlag(FLAG_C)),
 
             // POP DE
-            0xD1 => blk: {
+            0xD1 => {
                 self.de = self.pop();
-                break :blk 12;
+                return 12;
             },
 
             // JP NC,nn
             0xD2 => self.jp(!self.getFlag(FLAG_C)),
 
             // Invalid
-            0xD3 => blk: {
+            0xD3 => {
                 self.invalidOp(0xD3);
-                break :blk 4;
+                return 4;
             },
 
             // CALL NC,nn
             0xD4 => self.call(!self.getFlag(FLAG_C)),
 
             // PUSH DE
-            0xD5 => blk: {
+            0xD5 => {
                 self.push(self.de);
-                break :blk 16;
+                return 16;
             },
 
             // SUB A,n
-            0xD6 => blk: {
+            0xD6 => {
                 self.sub(self.readPc(), false);
-                break :blk 8;
+                return 8;
             },
 
             // RST 10
-            0xD7 => blk: {
+            0xD7 => {
                 self.rst(0x10);
-                break :blk 16;
+                return 16;
             },
 
             // RET C
             0xD8 => self.ret(self.getFlag(FLAG_C)),
 
             // RETI
-            0xD9 => blk: {
+            0xD9 => {
                 self.pc = self.pop();
                 self.ime = true;
-                break :blk 16;
+                return 16;
             },
 
             // JP C,nn
             0xDA => self.jp(self.getFlag(FLAG_C)),
 
             // Invalid
-            0xDB => blk: {
+            0xDB => {
                 self.invalidOp(0xDB);
-                break :blk 4;
+                return 4;
             },
 
             // CALL C,nn
             0xDC => self.call(self.getFlag(FLAG_C)),
 
             // Invalid
-            0xDD => blk: {
+            0xDD => {
                 self.invalidOp(0xDD);
-                break :blk 4;
+                return 4;
             },
 
             // SBC A,n
-            0xDE => blk: {
+            0xDE => {
                 self.sub(self.readPc(), true);
-                break :blk 8;
+                return 8;
             },
 
             // RST 18
-            0xDF => blk: {
+            0xDF => {
                 self.rst(0x18);
-                break :blk 16;
+                return 16;
             },
 
             // LDH (n),A
-            0xE0 => blk: {
+            0xE0 => {
                 const offset = self.readPc();
                 self.write(0xFF00 | @as(u16, offset), self.r8(.a).*);
-                break :blk 12;
+                return 12;
             },
 
             // POP HL
-            0xE1 => blk: {
+            0xE1 => {
                 self.hl = self.pop();
-                break :blk 12;
+                return 12;
             },
 
             // LD (C),A
-            0xE2 => blk: {
+            0xE2 => {
                 self.write(0xFF00 | @as(u16, self.r8(.c).*), self.r8(.a).*);
-                break :blk 8;
+                return 8;
             },
 
             // Invalid
-            0xE3 => blk: {
+            0xE3 => {
                 self.invalidOp(0xE3);
-                break :blk 4;
+                return 4;
             },
 
             // Invalid
-            0xE4 => blk: {
+            0xE4 => {
                 self.invalidOp(0xE4);
-                break :blk 4;
+                return 4;
             },
 
             // PUSH HL
-            0xE5 => blk: {
+            0xE5 => {
                 self.push(self.hl);
-                break :blk 16;
+                return 16;
             },
 
             // AND A,n
-            0xE6 => blk: {
+            0xE6 => {
                 self.andA(self.readPc());
-                break :blk 8;
+                return 8;
             },
 
             // RST 20
-            0xE7 => blk: {
+            0xE7 => {
                 self.rst(0x20);
-                break :blk 16;
+                return 16;
             },
 
             // ADD SP,n
-            0xE8 => blk: {
+            0xE8 => {
                 const offset: i8 = @bitCast(self.readPc());
                 const result = self.addSp(offset);
                 self.sp = result;
-                break :blk 16;
+                return 16;
             },
 
             // JP HL
-            0xE9 => blk: {
+            0xE9 => {
                 self.pc = self.hl;
-                break :blk 4;
+                return 4;
             },
 
             // LD (nn),A
-            0xEA => blk: {
+            0xEA => {
                 const addr = self.readPc16();
                 self.write(addr, self.r8(.a).*);
-                break :blk 16;
+                return 16;
             },
 
             // Invalid
-            0xEB => blk: {
+            0xEB => {
                 self.invalidOp(0xEB);
-                break :blk 4;
+                return 4;
             },
 
             // Invalid
-            0xEC => blk: {
+            0xEC => {
                 self.invalidOp(0xEC);
-                break :blk 4;
+                return 4;
             },
 
             // Invalid
-            0xED => blk: {
+            0xED => {
                 self.invalidOp(0xED);
-                break :blk 4;
+                return 4;
             },
 
             // XOR A,n
-            0xEE => blk: {
+            0xEE => {
                 self.xorA(self.readPc());
-                break :blk 8;
+                return 8;
             },
 
             // RST 28
-            0xEF => blk: {
+            0xEF => {
                 self.rst(0x28);
-                break :blk 16;
+                return 16;
             },
 
             // LDH A,(n)
-            0xF0 => blk: {
+            0xF0 => {
                 const offset = self.readPc();
                 self.r8(.a).* = self.read(0xFF00 | @as(u16, offset));
-                break :blk 12;
+                return 12;
             },
 
             // POP AF
-            0xF1 => blk: {
+            0xF1 => {
                 self.af = self.pop() & 0xFFF0;
-                break :blk 12;
+                return 12;
             },
 
             // LD A,(C)
-            0xF2 => blk: {
+            0xF2 => {
                 self.r8(.a).* = self.read(0xFF00 | @as(u16, self.r8(.c).*));
-                break :blk 8;
+                return 8;
             },
 
             // DI
-            0xF3 => blk: {
+            0xF3 => {
                 self.ime = false;
-                break :blk 4;
+                return 4;
             },
 
             // Invalid
-            0xF4 => blk: {
+            0xF4 => {
                 self.invalidOp(0xF4);
-                break :blk 4;
+                return 4;
             },
 
             // PUSH AF
-            0xF5 => blk: {
+            0xF5 => {
                 self.push(self.af);
-                break :blk 16;
+                return 16;
             },
 
             // OR A,n
-            0xF6 => blk: {
+            0xF6 => {
                 self.orA(self.readPc());
-                break :blk 8;
+                return 8;
             },
 
             // RST 30
-            0xF7 => blk: {
+            0xF7 => {
                 self.rst(0x30);
-                break :blk 16;
+                return 16;
             },
 
             // LD HL,SP+n
-            0xF8 => blk: {
+            0xF8 => {
                 const offset: i8 = @bitCast(self.readPc());
                 const result = self.addSp(offset);
                 self.hl = result;
-                break :blk 12;
+                return 12;
             },
 
             // LD SP,HL
-            0xF9 => blk: {
+            0xF9 => {
                 self.sp = self.hl;
-                break :blk 8;
+                return 8;
             },
 
             // LD A,(nn)
-            0xFA => blk: {
+            0xFA => {
                 const addr = self.readPc16();
                 self.r8(.a).* = self.read(addr);
-                break :blk 16;
+                return 16;
             },
 
             // EI
-            0xFB => blk: {
+            0xFB => {
                 self.ime_scheduled = true;
-                break :blk 4;
+                return 4;
             },
 
             // Invalid
-            0xFC => blk: {
+            0xFC => {
                 self.invalidOp(0xFC);
-                break :blk 4;
+                return 4;
             },
 
             // Invalid
-            0xFD => blk: {
+            0xFD => {
                 self.invalidOp(0xFD);
-                break :blk 4;
+                return 4;
             },
 
             // CP A,n
-            0xFE => blk: {
+            0xFE => {
                 self.cp(self.readPc());
-                break :blk 8;
+                return 8;
             },
 
             // RST 38
-            0xFF => blk: {
+            0xFF => {
                 self.rst(0x38);
-                break :blk 16;
+                return 16;
             },
         };
     }

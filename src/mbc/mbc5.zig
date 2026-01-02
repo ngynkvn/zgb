@@ -54,21 +54,21 @@ pub const Mbc5 = struct {
             0x0000...0x3FFF => if (addr < self.rom.len) self.rom[addr] else 0xFF,
 
             // ROM Bank N (0x4000-0x7FFF)
-            0x4000...0x7FFF => blk: {
+            0x4000...0x7FFF => {
                 const bank: u32 = self.getRomBank() % self.rom_banks;
                 const rom_addr = bank * 0x4000 + (addr - 0x4000);
-                break :blk if (rom_addr < self.rom.len) self.rom[rom_addr] else 0xFF;
+                return if (rom_addr < self.rom.len) self.rom[rom_addr] else 0xFF;
             },
 
             // External RAM (0xA000-0xBFFF)
-            0xA000...0xBFFF => blk: {
-                if (!self.ram_enabled) break :blk 0xFF;
+            0xA000...0xBFFF => {
+                if (!self.ram_enabled) return 0xFF;
                 if (self.ram) |ram| {
                     const bank: u32 = self.ram_bank % self.ram_banks;
                     const ram_addr = bank * 0x2000 + (addr - 0xA000);
-                    break :blk if (ram_addr < ram.len) ram[ram_addr] else 0xFF;
+                    return if (ram_addr < ram.len) ram[ram_addr] else 0xFF;
                 }
-                break :blk 0xFF;
+                return 0xFF;
             },
 
             else => 0xFF,

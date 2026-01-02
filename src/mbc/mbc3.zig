@@ -67,28 +67,28 @@ pub const Mbc3 = struct {
             0x0000...0x3FFF => if (addr < self.rom.len) self.rom[addr] else 0xFF,
 
             // ROM Bank N (0x4000-0x7FFF)
-            0x4000...0x7FFF => blk: {
+            0x4000...0x7FFF => {
                 const bank: u32 = if (self.rom_bank == 0) 1 else self.rom_bank;
                 const rom_addr = (bank % self.rom_banks) * 0x4000 + (addr - 0x4000);
-                break :blk if (rom_addr < self.rom.len) self.rom[rom_addr] else 0xFF;
+                return if (rom_addr < self.rom.len) self.rom[rom_addr] else 0xFF;
             },
 
             // External RAM / RTC (0xA000-0xBFFF)
-            0xA000...0xBFFF => blk: {
-                if (!self.ram_rtc_enabled) break :blk 0xFF;
+            0xA000...0xBFFF => {
+                if (!self.ram_rtc_enabled) return 0xFF;
 
                 if (self.ram_bank_or_rtc <= 0x03) {
                     // RAM access
                     if (self.ram) |ram| {
                         const bank: u32 = self.ram_bank_or_rtc % self.ram_banks;
                         const ram_addr = bank * 0x2000 + (addr - 0xA000);
-                        break :blk if (ram_addr < ram.len) ram[ram_addr] else 0xFF;
+                        return if (ram_addr < ram.len) ram[ram_addr] else 0xFF;
                     }
-                    break :blk 0xFF;
+                    return 0xFF;
                 } else if (self.has_rtc and self.ram_bank_or_rtc >= 0x08 and self.ram_bank_or_rtc <= 0x0C) {
                     // RTC register access
                     if (self.rtc_latched) {
-                        break :blk switch (self.ram_bank_or_rtc) {
+                        return switch (self.ram_bank_or_rtc) {
                             0x08 => self.latched_s,
                             0x09 => self.latched_m,
                             0x0A => self.latched_h,
@@ -97,7 +97,7 @@ pub const Mbc3 = struct {
                             else => 0xFF,
                         };
                     } else {
-                        break :blk switch (self.ram_bank_or_rtc) {
+                        return switch (self.ram_bank_or_rtc) {
                             0x08 => self.rtc_s,
                             0x09 => self.rtc_m,
                             0x0A => self.rtc_h,
@@ -107,7 +107,7 @@ pub const Mbc3 = struct {
                         };
                     }
                 }
-                break :blk 0xFF;
+                return 0xFF;
             },
 
             else => 0xFF,
