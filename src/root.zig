@@ -96,10 +96,10 @@ pub const GameBoy = struct {
     pub fn debugCpuState(self: *Self) void {
         std.log.debug("PC:{X:0>4} AF:{X:0>4} BC:{X:0>4} DE:{X:0>4} HL:{X:0>4} SP:{X:0>4}", .{
             self.cpu.pc,
-            self.cpu.af(),
-            self.cpu.bc(),
-            self.cpu.de(),
-            self.cpu.hl(),
+            self.cpu.af,
+            self.cpu.bc,
+            self.cpu.de,
+            self.cpu.hl,
             self.cpu.sp,
         });
     }
