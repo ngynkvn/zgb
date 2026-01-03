@@ -18,24 +18,21 @@ pub const Cartridge = struct {
 
     const Self = @This();
 
-    pub fn load(allocator: std.mem.Allocator, path: []const u8) !Self {
-        // Open file using posix API directly
-        const file = try std.posix.open(path, .{}, 0);
-        defer std.posix.close(file);
+    pub fn load(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !Self {
+        const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+        defer file.close(io);
 
         // Get file size
-        const stat = try std.posix.fstat(file);
+        const stat = try file.stat(io);
         const size: usize = @intCast(stat.size);
 
-        // Allocate and read
+        // Allocate and read using streaming API
         const rom = try allocator.alloc(u8, size);
         errdefer allocator.free(rom);
 
         var total_read: usize = 0;
         while (total_read < size) {
-            const bytes_read = std.posix.read(file, rom[total_read..]) catch |err| {
-                return err;
-            };
+            const bytes_read = try file.readStreaming(io, &.{rom[total_read..]});
             if (bytes_read == 0) break;
             total_read += bytes_read;
         }

@@ -1,5 +1,7 @@
 const std = @import("std");
+
 const zgb = @import("zgb");
+
 const c = @import("c.zig");
 
 pub const std_options = std.Options{
@@ -18,17 +20,13 @@ const PALETTE = [4]c.Color{
     c.Color{ .r = 15, .g = 56, .b = 15, .a = 255 }, // Darkest
 };
 
-pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{ .verbose_log = true }).init;
-    defer _ = gpa.deinit();
-    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
-    defer arena.deinit();
-    const allocator = arena.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.arena.allocator();
 
     // Parse command line args
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
-    if (args.len < 2) {
+    var args_it = std.process.Args.Iterator.init(init.minimal.args);
+    _ = args_it.next(); // skip program name
+    const rom_path = args_it.next() orelse {
         std.debug.print(
             \\Usage: zgb <rom.gb>
             \\Controls:
@@ -41,9 +39,7 @@ pub fn main() !void {
             \\  Escape - Quit
         , .{});
         return;
-    }
-
-    const rom_path = args[1];
+    };
 
     // Initialize emulator
     // Two-phase init: create struct first, then setup pointers after it's in final location
@@ -52,7 +48,7 @@ pub fn main() !void {
     defer gb.deinit(allocator);
 
     // Load ROM
-    gb.loadRom(allocator, rom_path) catch |err| {
+    gb.loadRom(allocator, init.io, rom_path) catch |err| {
         std.debug.print("Failed to load ROM: {}\n", .{err});
         return;
     };

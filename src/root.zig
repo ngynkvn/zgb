@@ -58,12 +58,12 @@ pub const GameBoy = struct {
         }
     }
 
-    pub fn loadRom(self: *Self, allocator: std.mem.Allocator, path: []const u8) !void {
+    pub fn loadRom(self: *Self, allocator: std.mem.Allocator, io: std.Io, path: []const u8) !void {
         if (self.cartridge) |*cart| {
             cart.deinit(allocator);
         }
 
-        self.cartridge = try Cartridge.load(allocator, path);
+        self.cartridge = try Cartridge.load(allocator, io, path);
         self.bus.cartridge = &self.cartridge.?;
 
         std.log.info("Loaded: {s}", .{self.cartridge.?.getTitle()});
@@ -193,9 +193,9 @@ pub const GameBoy = struct {
 
 test "gameboy basic initialization" {
     const allocator = std.testing.allocator;
-    var gb = GameBoy.create(allocator);
+    var gb = GameBoy.create();
     gb.setup();
-    defer gb.deinit();
+    defer gb.deinit(allocator);
 
     try std.testing.expectEqual(@as(u16, 0x0100), gb.cpu.pc);
 }
