@@ -1,4 +1,5 @@
 const std = @import("std");
+
 const Bus = @import("bus.zig").Bus;
 const Interrupt = @import("bus.zig").Interrupt;
 
@@ -58,8 +59,29 @@ pub const Cpu = struct {
     // Extended register enum that includes F (for internal use)
     pub const Reg8 = enum { a, f, b, c, d, e, h, l };
 
+    pub const PtrType = union(enum) {
+        r8: Reg8,
+        r16: Register16,
+        r16stk: Register16Stack,
+
+        pub fn Ptr(comptime self: PtrType) type {
+            return switch (self) {
+                .r8 => *u8,
+                .r16, .r16stk => *u16,
+            };
+        }
+    };
+
+    pub inline fn ptr(self: *Self, comptime reg: PtrType) reg.Ptr() {
+        return switch (reg) {
+            .r8 => |r| self.r8(r),
+            .r16 => |r| self.r16(r),
+            .r16stk => |r| self.r16stk(r),
+        };
+    }
+
     /// Get pointer to 8-bit register (little-endian: high byte at index 1)
-    pub inline fn r8(self: *Self, reg: Reg8) *u8 {
+    pub inline fn r8(self: *Self, comptime reg: Reg8) *u8 {
         return switch (reg) {
             .a => &std.mem.asBytes(&self.af)[1],
             .f => &std.mem.asBytes(&self.af)[0],
@@ -92,24 +114,22 @@ pub const Cpu = struct {
         };
     }
 
-    // Register decoding for opcodes
     // Maps 3-bit register field in opcodes to Reg8 (null = (HL) indirect)
     const REG_DECODE: [8]?Reg8 = .{ .b, .c, .d, .e, .h, .l, null, .a };
 
     /// Read from register or (HL) based on 3-bit opcode field
     inline fn readR8Idx(self: *Self, idx: u3) u8 {
-        return if (REG_DECODE[idx]) |reg|
-            self.r8(reg).*
-        else
-            self.read(self.hl);
+        return switch (idx) {
+            6 => self.read(self.hl),
+            inline else => |i| self.r8(REG_DECODE[i].?).*,
+        };
     }
 
     /// Write to register or (HL) based on 3-bit opcode field
     inline fn writeR8Idx(self: *Self, idx: u3, value: u8) void {
-        if (REG_DECODE[idx]) |reg| {
-            self.r8(reg).* = value;
-        } else {
-            self.write(self.hl, value);
+        switch (idx) {
+            6 => self.write(self.hl, value),
+            inline else => |i| self.r8(REG_DECODE[i].?).* = value,
         }
     }
 
